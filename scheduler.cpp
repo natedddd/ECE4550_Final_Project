@@ -68,7 +68,7 @@ static void prvCreateAllTasks( void );
 
 #if( schedUSE_SCHEDULER_TASK == 1 )
 	static void prvSchedulerCheckTimingError( TickType_t xTickCount, SchedTCB_t *pxTCB );
-	static void prvSchedulerFunction( void );
+	static void prvSchedulerFunction( void* pvParameter );
 	static void prvCreateSchedulerTask( void );
 	static void prvWakeScheduler( void );
 
@@ -187,6 +187,8 @@ static void prvPeriodicTaskCode( void *pvParameters )
 	}
     
 	#if( schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1 )
+        Serial.println("[prvPeriodicTaskCode] Calling prvSchedulerCheckTimingError");
+        Serial.flush();
         prvCheckDeadline(pxThisTask, xTaskGetTickCount());
 	#endif /* schedUSE_TIMING_ERROR_DETECTION_DEADLINE */
     
@@ -197,19 +199,18 @@ static void prvPeriodicTaskCode( void *pvParameters )
 	for( ; ; )
 	{	
 		/* Execute the task function specified by the user. */
-        Serial.print("Starting task: ");
-        Serial.print(pxThisTask->pcName);
-        Serial.print(" with priority ");
-        Serial.println(pxThisTask->uxPriority);
+        Serial.print("Starting task: ");Serial.print(pxThisTask->pcName);
+        Serial.print(" with priority ");Serial.println(pxThisTask->uxPriority);
         Serial.flush();
 
 		pxThisTask->pvTaskCode( pvParameters );
 				
         TOTAL_EXECUTION_TIME = TOTAL_EXECUTION_TIME += pxThisTask->pvParameters;
-        Serial.print("Finished task: ");
-        Serial.print(pxThisTask->pcName);
-        Serial.print(" with priority ");
-        Serial.println(pxThisTask->uxPriority);
+        Serial.print("Finished task: ");Serial.print(pxThisTask->pcName);
+        Serial.print(" with priority ");Serial.println(pxThisTask->uxPriority);
+        TickType_t xTickCount = xTaskGetTickCount();
+        Serial.print("Tick count at finish is: ");
+        Serial.println(xTickCount);
         Serial.flush();
 
 
@@ -436,6 +437,11 @@ static void prvSetFixedPriorities( void )
 	/* Checks whether given task has missed deadline or not. */
 	static void prvCheckDeadline( SchedTCB_t *pxTCB, TickType_t xTickCount )
 	{ 
+        
+        Serial.print("[prvCheckDeadline] Task name ");Serial.print(pxTCB->pcName);
+        Serial.print(" w/ absolute deadline ");Serial.print(pxTCB->xAbsoluteDeadline);
+        Serial.print(" at tick count ");Serial.println(xTickCount);
+        Serial.flush();
 		/* check whether deadline is missed. */     		
 		if (pxTCB->xAbsoluteDeadline < xTickCount) {
 		    prvDeadlineMissedHook( pxTCB, xTickCount );
@@ -452,7 +458,8 @@ static void prvSetFixedPriorities( void )
 	 * the scheduler task occur to block the periodic task. */
 	static void prvExecTimeExceedHook( TickType_t xTickCount, SchedTCB_t *pxCurrentTask )
 	{
-        Serial.println("Periodic task has exceeded its WCET");
+        Serial.println("[prvExecTimeExceedHook] Periodic task has exceeded its WCET");
+        Serial.flush();
         pxCurrentTask->xMaxExecTimeExceeded = pdTRUE;
         /* Is not suspended yet, but will be suspended by the scheduler later. */
         pxCurrentTask->xSuspended = pdTRUE;
@@ -486,7 +493,7 @@ static void prvSetFixedPriorities( void )
             if( pdTRUE == pxTCB->xMaxExecTimeExceeded )
             {
                 pxTCB->xMaxExecTimeExceeded = pdFALSE;
-                Serial.print("Suspending task ");
+                Serial.print("[prvSchedulerCheckTimingError] Suspending task ");
                 Serial.println(pxTCB->pcName);
                 Serial.flush();
                 vTaskSuspend( *pxTCB->pxTaskHandle );
@@ -497,7 +504,7 @@ static void prvSetFixedPriorities( void )
                 {
                     pxTCB->xSuspended = pdFALSE;
                     pxTCB->xLastWakeTime = xTickCount;
-                    Serial.print("Resuming task ");
+                    Serial.print("[prvSchedulerCheckTimingError] Resuming task ");
                     Serial.println(pxTCB->pcName);
                     Serial.flush();
                     vTaskResume( *pxTCB->pxTaskHandle );
@@ -518,11 +525,45 @@ static void prvSetFixedPriorities( void )
      		#if( schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1 || schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME == 1 )
 				TickType_t xTickCount = xTaskGetTickCount();
         		SchedTCB_t *pxTCB;
-        		
-                for (BaseType_t uxIndex = 0; uxIndex < schedMAX_NUMBER_OF_PERIODIC_TASKS; uxIndex++) {
-                    pxTCB = &xTCBArray[uxIndex];
+                BaseType_t xIndex;
+				// for(xIndex = 0; xIndex < xTaskCounter; xIndex++)
+				// {
+				// 	if(*xTCBArray[ xIndex ].pxTaskHandle == xTaskGetCurrentTaskHandle()) {
+				// 		pxTCB = &xTCBArray[ xIndex ];
+                //         Serial.println("[prvSchedulerFunction] Calling prvSchedulerCheckTimingError");
+                //         Serial.flush();
+				// 		prvSchedulerCheckTimingError(xTickCount, pxTCB);
+				// 	}
+				// }
+
+
+                for( xIndex = 0; xIndex < xTaskCounter; xIndex++ )
+                {
+                    pxTCB = &xTCBArray[ xIndex ];
                     prvSchedulerCheckTimingError( xTickCount, pxTCB );
-                }	
+                }
+        		
+                // for (BaseType_t uxIndex = 0; uxIndex < xTaskCounter; uxIndex++) {
+                //     TaskHandle_t xCurrentTaskHandle = xTaskGetCurrentTaskHandle();	
+                //     BaseType_t prioCurrentTask = uxTaskPriorityGet(xCurrentTaskHandle);
+                //     pxTCB = &xTCBArray[uxIndex];
+                //     Serial.print("[prvSchedulerFunction] Task here is: "); Serial.print(pxTCB->pcName); 
+                //     Serial.print(" at tickcount "); Serial.println(xTickCount); 
+                //     Serial.flush();
+
+                //     Serial.print("[prvSchedulerFunction] Current task priority is: ");
+                //     Serial.println(prioCurrentTask); Serial.flush();
+                //     if(*xTCBArray[ uxIndex ].pxTaskHandle == xTaskGetCurrentTaskHandle()) {
+				// 		Serial.print("[prvSchedulerFunction] TESTER");
+				// 	}
+
+                //     if(pxTCB->uxPriority == prioCurrentTask) {
+                //     // if(pxTCB->xInUse == pdTRUE) {
+                //         Serial.println("[prvSchedulerFunction] pxTCB->xInUse"); Serial.flush();
+                //         Serial.println(pxTCB->pcName); Serial.flush();
+                //         prvSchedulerCheckTimingError( xTickCount, pxTCB );
+				// 	}
+                // }	
 			#endif /* schedUSE_TIMING_ERROR_DETECTION_DEADLINE || schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME */
 
 			ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
@@ -558,6 +599,9 @@ static void prvSetFixedPriorities( void )
         UBaseType_t flag = 0;
         BaseType_t xIndex;
 		BaseType_t prioCurrentTask = uxTaskPriorityGet(xCurrentTaskHandle);
+        // Serial.print("[vApplicationTickHook] task priority is: ");
+        // Serial.println(prioCurrentTask); 
+        // Serial.flush();
 
 		for(xIndex = 0; xIndex < xTaskCounter ; xIndex++){
 			pxCurrentTask = &xTCBArray[xIndex];
@@ -609,7 +653,7 @@ void vSchedulerInit( void )
  * have been created with API function before calling this function. */
 void vSchedulerStart( void )
 {
-    Serial.println("[vSchedulerStart] Starting");
+    Serial.println("[vSchedulerStart] ---------- Starting ---------- ");
 
 	#if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS )
 		prvSetFixedPriorities();	
