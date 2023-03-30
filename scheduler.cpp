@@ -340,7 +340,7 @@ static void prvSetFixedPriorities( void )
 		for( xIndex = 0; xIndex < xTaskCounter; xIndex++ )
 		{
             pxTCB = &xTCBArray[xIndex];
-            if (pdTRUE == pxTCB->xPriorityIsSet) continue; // ignore if already used
+            if (pdTRUE == pxTCB->xPriorityIsSet) continue; // ignore if already set
 
 			#if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS )
 				// check if the current period is <= current shortest
@@ -350,8 +350,8 @@ static void prvSetFixedPriorities( void )
                 }
             #elif(schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_DMS) // DM condition
                 // check if the current deadline is <= current shortest
-                if (pxTCB->xRelativeDeadline < xShortest) {
-                    xShortest = pxTCB->xRelativeDeadline;
+                if (pxTCB->xAbsoluteDeadline < xShortest) {
+                    xShortest = pxTCB->xAbsoluteDeadline;
                     pxShortestTaskPointer = pxTCB;
                 }
 			#endif /* schedSCHEDULING_POLICY */
@@ -365,7 +365,10 @@ static void prvSetFixedPriorities( void )
         pxShortestTaskPointer->uxPriority = xHighestPriority;
         xPreviousShortest = xShortest;
         pxShortestTaskPointer->xPriorityIsSet = pdTRUE;
-
+        Serial.print("[prvSetFixedPriorities] Task name ");Serial.print(pxShortestTaskPointer->pcName);
+        Serial.print(" w/ absolute deadline ");Serial.print(pxShortestTaskPointer->xAbsoluteDeadline);
+        Serial.print(" and priority ");Serial.println(pxShortestTaskPointer->uxPriority);
+        Serial.flush();
 
         // pxShortestTaskPointer->uxPriority = configMAX_PRIORITIES - xIter;
         // pxShortestTaskPointer->xPriorityIsSet = pdTRUE;
@@ -655,7 +658,7 @@ void vSchedulerStart( void )
 {
     Serial.println("[vSchedulerStart] ---------- Starting ---------- ");
 
-	#if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS )
+	#if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS || schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_DMS)
 		prvSetFixedPriorities();	
 	#endif /* schedSCHEDULING_POLICY */
 
