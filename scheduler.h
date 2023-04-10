@@ -6,7 +6,7 @@
 #include <projdefs.h>
 #include <timers.h>
 #include <list.h>
-// #include <croutine.h>
+#include <croutine.h>
 #include <portable.h>
 #include <stack_macros.h>
 #include <mpu_wrappers.h>
@@ -22,7 +22,6 @@
 
 
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,6 +32,8 @@ extern "C" {
 
 /* Configure scheduling policy by setting this define to the appropriate one. */
 #define schedSCHEDULING_POLICY schedSCHEDULING_POLICY_RMS //schedSCHEDULING_POLICY_EDF
+
+#define schedAUGMENT_SCHEDULER_TASK 0       /* Augment the scheduler to add scheduler overhead*/
 
 /* Maximum number of periodic tasks that can be created. (Scheduler task is
  * not included) */
@@ -57,11 +58,11 @@ extern "C" {
 
 #if( schedUSE_SCHEDULER_TASK == 1 )
 	/* Priority of the scheduler task. */
-	#define schedSCHEDULER_PRIORITY ( configMAX_PRIORITIES ) //- 1 )
+	#define schedSCHEDULER_PRIORITY ( configMAX_PRIORITIES - 1 )
 	/* Stack size of the scheduler task. */
 	#define schedSCHEDULER_TASK_STACK_SIZE 200 
 	/* The period of the scheduler task in software ticks. */
-	#define schedSCHEDULER_TASK_PERIOD pdMS_TO_TICKS( 100 )	
+	#define schedSCHEDULER_TASK_PERIOD pdMS_TO_TICKS( 100 )
 #endif /* schedUSE_SCHEDULER_TASK */
 
 /* This function must be called before any other function call from scheduler.h. */
