@@ -6,7 +6,7 @@
 #include <projdefs.h>
 #include <timers.h>
 #include <list.h>
-#include <croutine.h>
+// #include <croutine.h>
 #include <portable.h>
 #include <stack_macros.h>
 #include <mpu_wrappers.h>
@@ -25,6 +25,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// ND - Used for project 4, semaphores
+#define schedMAX_NUM_CRIT_RESOURCES 2
 
 /* The scheduling policy can be chosen from one of these. */
 #define schedSCHEDULING_POLICY_RMS 1 		/* Rate-monotonic scheduling */
@@ -83,6 +86,13 @@ void vSchedulerInit( void );
  * */
 void vSchedulerPeriodicTaskCreate( TaskFunction_t pvTaskCode, const char *pcName, UBaseType_t uxStackDepth, void *pvParameters, UBaseType_t uxPriority,
 		TaskHandle_t *pxCreatedTask, TickType_t xPhaseTick, TickType_t xPeriodTick, TickType_t xMaxExecTimeTick, TickType_t xDeadlineTick );
+
+void vSchedulerPeriodicTaskCreateWithResource(TaskFunction_t pvTaskCode, const char* pcName, UBaseType_t uxStackDepth, void* pvParameters, UBaseType_t uxPriority,
+	TaskHandle_t* pxCreatedTask, TickType_t xPhaseTick, TickType_t xPeriodTick, TickType_t xMaxExecTimeTick, TickType_t xDeadlineTick, int critResource[], int numResources);
+
+void vSchedulerResourceWait(BaseType_t xIndex, const char* pcName);
+void vSchedulerResourceRelease(BaseType_t xIndex, const char* pcName);
+
 
 /* Deletes a periodic task associated with the given task handle. */
 void vSchedulerPeriodicTaskDelete( TaskHandle_t xTaskHandle );

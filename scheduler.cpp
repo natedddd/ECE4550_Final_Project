@@ -1,6 +1,21 @@
 #include "scheduler.h"
 
 #define schedUSE_TCB_ARRAY 1
+#define schedUSE_SEMAPHORES 1
+#define schedUSE_OCPP 1 // 1 = OCPP, 0 = ICPP
+
+
+typedef struct xCriticalResource {
+    SemaphoreHandle_t xSemaHandle = NULL;
+    UBaseType_t resourceID;			  /* Name of the resource. */
+    UBaseType_t xSemaPriority;
+    // an array that keeps track of the task handles
+    // of the currently blocked tasks, in order
+    UBaseType_t xNumBlockedTasks;
+    BaseType_t xInUse;
+    TaskHandle_t xBlockedTasks[10] = {};
+
+} xCritResource;
 
 /* Extended Task control block for managing periodic tasks within this library. */
 typedef struct xExtended_TCB
@@ -18,6 +33,7 @@ typedef struct xExtended_TCB
 	TickType_t xLastWakeTime;	  /* Last time stamp when the task was running. */
 	TickType_t xMaxExecTime;	  /* Worst-case execution time of the task. */
 	TickType_t xExecTime;		  /* Current execution time of the task. */
+    UBaseType_t xOriginalPriority;
 
 	BaseType_t xWorkIsDone; /* pdFALSE if the job is not finished, pdTRUE if the job is finished. */
 
@@ -68,9 +84,9 @@ static void prvCreateSchedulerTask(void);
 static void prvWakeScheduler(void);
 
 #if (schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1)
-static void prvPeriodicTaskRecreate(SchedTCB_t* pxTCB);
-static void prvDeadlineMissedHook(SchedTCB_t* pxTCB, TickType_t xTickCount);
-static void prvCheckDeadline(SchedTCB_t* pxTCB, TickType_t xTickCount);
+    static void prvPeriodicTaskRecreate(SchedTCB_t* pxTCB);
+    static void prvDeadlineMissedHook(SchedTCB_t* pxTCB, TickType_t xTickCount);
+    static void prvCheckDeadline(SchedTCB_t* pxTCB, TickType_t xTickCount);
 #endif /* schedUSE_TIMING_ERROR_DETECTION_DEADLINE */
 
 #if (schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME == 1)
@@ -80,11 +96,16 @@ static void prvExecTimeExceedHook(TickType_t xTickCount, SchedTCB_t* pxCurrentTa
 #endif /* schedUSE_SCHEDULER_TASK */
 
 #if (schedUSE_TCB_ARRAY == 1)
-/* Array for extended TCBs. */
-static SchedTCB_t xTCBArray[schedMAX_NUMBER_OF_PERIODIC_TASKS] = { 0 };
-/* Counter for number of periodic tasks. */
-static BaseType_t xTaskCounter = 0;
+    /* Array for extended TCBs. */
+    static SchedTCB_t xTCBArray[schedMAX_NUMBER_OF_PERIODIC_TASKS] = { 0 };
+    /* Counter for number of periodic tasks. */
+    static BaseType_t xTaskCounter = 0;
 #endif /* schedUSE_TCB_ARRAY */
+
+#if (schedUSE_SEMAPHORES == 1)
+    /* Array for critical resources. */
+    static xCritResource xCriticalResourceArray[schedMAX_NUM_CRIT_RESOURCES] = { }; // TODO, if doesn't work
+#endif
 
 #if (schedUSE_SCHEDULER_TASK)
 static TickType_t xSchedulerWakeCounter = 0; /* useful. why? */
@@ -124,6 +145,36 @@ static void prvInitTCBArray(void)
 		xTCBArray[uxIndex].xInUse = pdFALSE;
 		xTCBArray[uxIndex].pxTaskHandle = NULL;
 	}
+}
+
+/* Initializes xCriticalResourceArray. */
+static void prvInitCriticalResourceArray(void)
+{
+    UBaseType_t uxIndex;
+    for (uxIndex = 0; uxIndex < schedMAX_NUM_CRIT_RESOURCES; uxIndex++)
+    {
+        xCriticalResourceArray[uxIndex].xSemaHandle = xSemaphoreCreateMutex();
+        xCriticalResourceArray[uxIndex].resourceID = uxIndex+1;
+        xCriticalResourceArray[uxIndex].xInUse = pdFALSE;
+        xCriticalResourceArray[uxIndex].xNumBlockedTasks = 0;
+    }
+}
+
+static void updateCriticalResourcePriority(int critResource[], int numResources,  UBaseType_t taskPriority) {
+    if (numResources == 0) return;
+    for (UBaseType_t uxIndex = 0; uxIndex < numResources; uxIndex++) {
+        UBaseType_t resourceIndex = critResource[uxIndex];
+
+        xCriticalResource *xResource = &xCriticalResourceArray[resourceIndex-1];
+        if (xResource->xSemaPriority < taskPriority) {
+            xResource->xSemaPriority = taskPriority;
+        }
+        // Serial.print("Semaphore ");
+        // Serial.print(xResource->resourceID);
+        // Serial.print(" priority is ");
+        // Serial.println(xResource->xSemaPriority);
+        // Serial.flush();
+    } 
 }
 
 /* Find index for an empty entry in xTCBArray. Returns -1 if there is no empty entry. */
@@ -201,6 +252,8 @@ static void prvPeriodicTaskCode(void* pvParameters)
 	for (;;)
 	{
 		/* Execute the task function specified by the user. */
+        Serial.println();
+        Serial.print("Starting task ");
 		Serial.print(pxThisTask->pcName);
 		Serial.print(" - ");
 		Serial.print(xTaskGetTickCount());
@@ -279,6 +332,72 @@ void vSchedulerPeriodicTaskCreate(TaskFunction_t pvTaskCode, const char* pcName,
 #endif /* schedUSE_TCB_SORTED_LIST */
 	taskEXIT_CRITICAL();
 }
+
+/* Creates a periodic task that needs a critical resources. */
+void vSchedulerPeriodicTaskCreateWithResource(TaskFunction_t pvTaskCode, const char* pcName, UBaseType_t uxStackDepth, void* pvParameters, UBaseType_t uxPriority,
+	TaskHandle_t* pxCreatedTask, TickType_t xPhaseTick, TickType_t xPeriodTick, TickType_t xMaxExecTimeTick, TickType_t xDeadlineTick, int critResource[], int numResources)
+{
+	taskENTER_CRITICAL();
+	SchedTCB_t* pxNewTCB;
+
+#if (schedUSE_TCB_ARRAY == 1)
+	BaseType_t xIndex = prvFindEmptyElementIndexTCB();
+	configASSERT(xTaskCounter < schedMAX_NUMBER_OF_PERIODIC_TASKS);
+	configASSERT(xIndex != -1);
+	pxNewTCB = &xTCBArray[xIndex];
+#endif /* schedUSE_TCB_ARRAY */
+
+	/* Intialize item. */
+	pxNewTCB->pvTaskCode = pvTaskCode;
+	pxNewTCB->pcName = pcName;
+	pxNewTCB->uxStackDepth = uxStackDepth;
+	pxNewTCB->pvParameters = pvParameters;
+	pxNewTCB->uxPriority = uxPriority;
+	pxNewTCB->pxTaskHandle = pxCreatedTask;
+	pxNewTCB->xReleaseTime = xPhaseTick;
+	pxNewTCB->xPeriod = xPeriodTick;
+  
+
+	/* Populate the rest */
+	/* your implementation goes here */
+	pxNewTCB->xMaxExecTime = xMaxExecTimeTick;
+	pxNewTCB->xRelativeDeadline = xDeadlineTick;
+	pxNewTCB->xAbsoluteDeadline = xPhaseTick + xDeadlineTick;
+	pxNewTCB->xLastWakeTime = 0;
+	pxNewTCB->xExecTime = 0;
+	pxNewTCB->xWorkIsDone = pdTRUE;
+	pxNewTCB->xPriorityIsSet = pdTRUE;
+
+    // update semaphore ceilings
+    updateCriticalResourcePriority(critResource, numResources, uxPriority);
+
+#if (schedUSE_TCB_ARRAY == 1)
+	pxNewTCB->xInUse = pdTRUE;
+#endif /* schedUSE_TCB_ARRAY */
+
+#if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS || schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_DMS)
+	/* member initialization */
+	/* your implementation goes here */
+	pxNewTCB->xPriorityIsSet = pdFALSE;
+#endif /* schedSCHEDULING_POLICY */
+
+#if (schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1)
+	/* member initialization */
+	/* your implementation goes here */
+	pxNewTCB->xExecutedOnce = pdFALSE;
+#endif /* schedUSE_TIMING_ERROR_DETECTION_DEADLINE */
+
+#if (schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME == 1)
+	pxNewTCB->xSuspended = pdFALSE;
+	pxNewTCB->xMaxExecTimeExceeded = pdFALSE;
+#endif /* schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME */
+
+#if (schedUSE_TCB_ARRAY == 1)
+	xTaskCounter++;
+#endif /* schedUSE_TCB_SORTED_LIST */
+	taskEXIT_CRITICAL();
+}
+
 
 /* Deletes a periodic task. */
 void vSchedulerPeriodicTaskDelete(TaskHandle_t xTaskHandle)
@@ -390,6 +509,7 @@ static void prvSetFixedPriorities(void)
 		pxShortestTaskPointer->uxPriority = xHighestPriority;
 		pxShortestTaskPointer->xPriorityIsSet = pdTRUE;
 		xPreviousShortest = xShortest;
+        pxShortestTaskPointer->xOriginalPriority = xHighestPriority;
 	}
 }
 #endif /* schedSCHEDULING_POLICY */
@@ -656,12 +776,194 @@ void vApplicationTickHook(void)
 }
 #endif /* schedUSE_SCHEDULER_TASK */
 
+
+
+// vSchedulerResourceWait pass resource index, handles priority of tasks that are running or requesting the resource
+// vSchedulerResourceRelease release the resource
+
+void vSchedulerResourceWait(BaseType_t xIndex, const char* pcName) {
+
+    xCriticalResource *xResource = &xCriticalResourceArray[xIndex-1];
+    SemaphoreHandle_t xSemaphoreHandle = xResource->xSemaHandle;
+    TaskHandle_t xCurrentTaskHandle = xTaskGetHandle(pcName);
+    configASSERT(xCurrentTaskHandle != NULL);
+        
+    BaseType_t index = prvGetTCBIndexFromHandle(xCurrentTaskHandle);
+    SchedTCB_t* pxCurrentTask = &xTCBArray[index];
+
+    Serial.print("Attempting to acquire semaphore ");
+    Serial.print(xResource->resourceID); Serial.print(" for task ");
+    Serial.println(pxCurrentTask->pcName); Serial.flush();
+    
+    // for OCPP, task priority stays the same until a task is blocked
+    // by current task, then task's priority of highest blocked task
+    #if (schedUSE_OCPP) 
+        // get the max priority ceiling of all currently locked semaphores
+        UBaseType_t maxPriority = 0;
+        UBaseType_t maxIndex = 0;
+        for (UBaseType_t uxIndex = 0; uxIndex < schedMAX_NUM_CRIT_RESOURCES; uxIndex++)
+        {
+            if (xCriticalResourceArray[uxIndex].xInUse) {
+                if (xCriticalResourceArray[uxIndex].xSemaPriority > maxPriority) {
+                    maxPriority = xCriticalResourceArray[uxIndex].xSemaPriority;
+                    maxIndex = uxIndex;
+                }
+            }
+        }
+        // Serial.print("max priority ");
+        // Serial.println(maxPriority); Serial.flush();
+        // Serial.print("Current task priority ");
+        // Serial.println(uxTaskPriorityGet(xCurrentTaskHandle)); Serial.flush();
+
+        // if less than, need to suspend task
+        if (uxTaskPriorityGet(xCurrentTaskHandle) <= maxPriority) {
+            xCriticalResource *tempResource = &xCriticalResourceArray[maxIndex];
+            tempResource->xBlockedTasks[tempResource->xNumBlockedTasks] = xCurrentTaskHandle;
+            tempResource->xNumBlockedTasks++;
+            Serial.print("Unable to acquire! The priority is not high enough. Suspending task ");
+            Serial.println(pxCurrentTask->pcName);
+            Serial.flush();
+            Serial.print("Resource ");
+            Serial.print(tempResource->resourceID);
+            Serial.print(" now blocks ");
+            Serial.print(tempResource->xNumBlockedTasks);
+            Serial.println(" tasks!"); Serial.flush();
+
+            vTaskSuspend(xCurrentTaskHandle);
+        } else {
+            // get the max of xBlockedTasks.priority
+            UBaseType_t maxPriority = uxTaskPriorityGet(xCurrentTaskHandle);
+
+            for (UBaseType_t uxIndex = 0; uxIndex < xResource->xNumBlockedTasks; uxIndex++)
+            {
+                // get the current task
+                BaseType_t xIndex = prvGetTCBIndexFromHandle(xResource->xBlockedTasks[uxIndex]);
+                SchedTCB_t* pxCurrentTask = &xTCBArray[xIndex];
+
+                // find the highest prioirty of all blocked tasks
+                if (uxTaskPriorityGet(xCurrentTaskHandle) > maxPriority) {
+                    maxPriority = pxCurrentTask->uxPriority;
+                }
+            }
+            vTaskPrioritySet(xCurrentTaskHandle, maxPriority);
+
+        }
+    #else
+        Serial.print("Current task priority before is ");
+        Serial.println(uxTaskPriorityGet(xCurrentTaskHandle)); Serial.flush();
+        // if resource is not available, still need to suspend ourselves
+        if (xResource->xInUse == pdFALSE) {
+            vTaskPrioritySet(xCurrentTaskHandle, xResource->xSemaPriority);
+            Serial.print("Current task priority after is ");
+            Serial.println(uxTaskPriorityGet(xCurrentTaskHandle)); Serial.flush();
+        } else {
+            xResource->xBlockedTasks[xResource->xNumBlockedTasks] = xCurrentTaskHandle;
+            xResource->xNumBlockedTasks++;
+            Serial.print("Unable to acquire! Suspending task ");
+            Serial.println(pxCurrentTask->pcName);
+            Serial.flush();
+            vTaskSuspend(xCurrentTaskHandle);
+        }
+    #endif
+    
+
+    // Serial.print("Attempting to acquire semaphore ");
+    // Serial.println(xResource->resourceID); Serial.flush();
+
+    // See if we can obtain the semaphore.  If the semaphore is not available, wait
+    if( xSemaphoreTake( xSemaphoreHandle, ( TickType_t ) 10 ) == pdTRUE ) { 
+        // We were able to obtain the semaphore and can now access the
+        // shared resource.
+        xResource->xInUse = pdTRUE;
+        Serial.print("Semaphore ");
+        Serial.print(xResource->resourceID);
+        Serial.println(" acquired!");
+        Serial.flush();
+    } else {
+        Serial.println("Did not acquire semaphore");
+    }
+}
+
+void vSchedulerResourceRelease(BaseType_t xIndex, const char* pcName) {
+
+    xCriticalResource *xResource = &xCriticalResourceArray[xIndex-1];
+    SemaphoreHandle_t xSemaphoreHandle = xResource->xSemaHandle;
+    TaskHandle_t xCurrentTaskHandle = xTaskGetHandle(pcName);
+    configASSERT(xCurrentTaskHandle != NULL);
+    
+    BaseType_t uxIndex = prvGetTCBIndexFromHandle(xCurrentTaskHandle);
+    SchedTCB_t* pxCurrentTask = &xTCBArray[uxIndex];
+
+
+    Serial.print("Requesting to release semaphore ");
+    Serial.print(xResource->resourceID);
+    Serial.print(" for task ");
+    Serial.println(pxCurrentTask->pcName);
+    Serial.flush();
+
+    // unlock semaphore
+    xSemaphoreGive( xSemaphoreHandle );
+    xResource->xInUse = pdFALSE;
+    Serial.print("Semaphore ");
+    Serial.print(xIndex);
+    Serial.println(" released!");
+    Serial.flush();
+
+
+    // check if we need to resume a task
+    if (xResource->xNumBlockedTasks > 0) {
+        Serial.print("Num blocked tasks: ");
+        Serial.print(xResource->xNumBlockedTasks);
+        Serial.println("!");
+        Serial.flush();
+            // check the blocked task array to resume the highest priority task
+        UBaseType_t maxPriority = 0;
+        UBaseType_t maxPriorityIndex = 0;
+        TaskHandle_t maxPriorityTaskHandle;
+        
+        for (UBaseType_t uxIndex = 0; uxIndex < xResource->xNumBlockedTasks; uxIndex++)
+        {
+            // get the current task
+            BaseType_t xIndex = prvGetTCBIndexFromHandle(xResource->xBlockedTasks[uxIndex]);
+            SchedTCB_t* pxCurrentTask = &xTCBArray[xIndex];
+
+            // find the highest prioirty of all blocked tasks
+            if (pxCurrentTask->uxPriority > maxPriority) {
+                maxPriority = pxCurrentTask->uxPriority;
+                maxPriorityIndex = uxIndex;
+                maxPriorityTaskHandle = xResource->xBlockedTasks[uxIndex];
+            }
+        }
+        // updates task's priority
+        BaseType_t xIndex = prvGetTCBIndexFromHandle(maxPriorityTaskHandle);
+        SchedTCB_t* pxCurrentTask = &xTCBArray[xIndex];
+        vTaskPrioritySet(maxPriorityTaskHandle, pxCurrentTask->xOriginalPriority);
+
+        Serial.print("Resuming highest priority task ");
+        Serial.print(pxCurrentTask->pcName); 
+        Serial.println("!"); Serial.flush();
+
+        // resume the highest priority task
+        xResource->xBlockedTasks[maxPriorityIndex] = 0;
+        xResource->xNumBlockedTasks--;
+        vTaskResume(maxPriorityTaskHandle);
+    } else {
+        Serial.println("No blocked resources to resume!");
+        Serial.flush();
+    }
+}
+
+
 /* This function must be called before any other function call from this module. */
 void vSchedulerInit(void)
 {
-#if (schedUSE_TCB_ARRAY == 1)
-	prvInitTCBArray();
-#endif /* schedUSE_TCB_ARRAY */
+    #if (schedUSE_TCB_ARRAY == 1)
+        prvInitTCBArray();
+    #endif /* schedUSE_TCB_ARRAY */
+
+    #if (schedUSE_SEMAPHORES == 1)
+        prvInitCriticalResourceArray();
+    #endif /* schedUSE_TCB_ARRAY */
 
 	Serial.println("vSchedulerInit() completed!");
 }
@@ -680,6 +982,12 @@ void vSchedulerStart(void)
 
 #endif /* schedSCHEDULING_POLICY */
 
+#if (schedUSE_OCPP) 
+    Serial.println("Running OCPP");
+#else
+    Serial.println("Running ICPP");
+#endif
+
 #if (schedUSE_SCHEDULER_TASK == 1)
 	prvCreateSchedulerTask();
 #endif /* schedUSE_SCHEDULER_TASK */
@@ -687,6 +995,7 @@ void vSchedulerStart(void)
 	prvCreateAllTasks();
 
 	xSystemStartTime = xTaskGetTickCount();
+
 
 	vTaskStartScheduler();
 }
