@@ -6,7 +6,7 @@
 #include <projdefs.h>
 #include <timers.h>
 #include <list.h>
-// #include <croutine.h>
+#include <croutine.h>
 #include <portable.h>
 #include <stack_macros.h>
 #include <mpu_wrappers.h>
@@ -26,17 +26,11 @@
 extern "C" {
 #endif
 
-// ND - Used for project 4, semaphores
-#define schedMAX_NUM_CRIT_RESOURCES 2
-
 /* The scheduling policy can be chosen from one of these. */
 #define schedSCHEDULING_POLICY_RMS 1 		/* Rate-monotonic scheduling */
-#define schedSCHEDULING_POLICY_DMS 2 		/* Deadline-monotonic scheduling */
 
 /* Configure scheduling policy by setting this define to the appropriate one. */
 #define schedSCHEDULING_POLICY schedSCHEDULING_POLICY_RMS //schedSCHEDULING_POLICY_EDF
-
-#define schedAUGMENT_SCHEDULER_TASK 0       /* Augment the scheduler to add scheduler overhead*/
 
 /* Maximum number of periodic tasks that can be created. (Scheduler task is
  * not included) */
@@ -65,7 +59,7 @@ extern "C" {
 	/* Stack size of the scheduler task. */
 	#define schedSCHEDULER_TASK_STACK_SIZE 200 
 	/* The period of the scheduler task in software ticks. */
-	#define schedSCHEDULER_TASK_PERIOD pdMS_TO_TICKS( 100 )
+	#define schedSCHEDULER_TASK_PERIOD pdMS_TO_TICKS( 100 )	
 #endif /* schedUSE_SCHEDULER_TASK */
 
 /* This function must be called before any other function call from scheduler.h. */
@@ -86,13 +80,6 @@ void vSchedulerInit( void );
  * */
 void vSchedulerPeriodicTaskCreate( TaskFunction_t pvTaskCode, const char *pcName, UBaseType_t uxStackDepth, void *pvParameters, UBaseType_t uxPriority,
 		TaskHandle_t *pxCreatedTask, TickType_t xPhaseTick, TickType_t xPeriodTick, TickType_t xMaxExecTimeTick, TickType_t xDeadlineTick );
-
-void vSchedulerPeriodicTaskCreateWithResource(TaskFunction_t pvTaskCode, const char* pcName, UBaseType_t uxStackDepth, void* pvParameters, UBaseType_t uxPriority,
-	TaskHandle_t* pxCreatedTask, TickType_t xPhaseTick, TickType_t xPeriodTick, TickType_t xMaxExecTimeTick, TickType_t xDeadlineTick, int critResource[], int numResources);
-
-void vSchedulerResourceWait(BaseType_t xIndex, const char* pcName);
-void vSchedulerResourceRelease(BaseType_t xIndex, const char* pcName);
-
 
 /* Deletes a periodic task associated with the given task handle. */
 void vSchedulerPeriodicTaskDelete( TaskHandle_t xTaskHandle );
