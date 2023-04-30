@@ -207,7 +207,7 @@
 #endif
 
 #ifndef configNUM_THREAD_LOCAL_STORAGE_POINTERS
-    #define configNUM_THREAD_LOCAL_STORAGE_POINTERS    0
+    #define configNUM_THREAD_LOCAL_STORAGE_POINTERS    1
 #endif
 
 #ifndef configUSE_RECURSIVE_MUTEXES
