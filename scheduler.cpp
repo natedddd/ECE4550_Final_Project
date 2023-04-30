@@ -261,8 +261,10 @@ void vSchedulerPeriodicTaskCreate(TaskFunction_t pvTaskCode, const char* pcName,
 	/* member initialization */
 	/* your implementation goes here */
 	pxNewTCB->xPriorityIsSet = pdFALSE;
-#endif /* schedSCHEDULING_POLICY */
-
+#elif (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF)
+    pxNewTCB->xAbsoluteDeadline = pxNewTCB->xRelativeDeadline + pxNewTCB->xReleaseTime + xSystemStartTime;
+    pxNewTCB->uxPriority = -1;
+#endif
 #if (schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1)
 	/* member initialization */
 	/* your implementation goes here */
@@ -392,6 +394,32 @@ static void prvSetFixedPriorities(void)
 		xPreviousShortest = xShortest;
 	}
 }
+#elif (schedSCHEDULING_POLICY== schedSCHEDULING_POLICY_EDF)
+    // Initializes priorities of all tasks using EDF scheduling
+    static void initializeEDF(void) {
+        SchedTCB_t *pxTCB;
+
+        #if( schedUSE_SCHEDULER_TASK == 1 )
+            UBaseType_t uxHighestPriority = schedSCHEDULER_PRIORITY - 1;
+        #else
+            UBaseType_t uxHighestPriority = configMAX_PRIORITIES - 1;
+        #endif /* schedUSE_SCHEDULER_TASK */
+
+			const ListItem_t *pxTCBListEndMarker = listGET_END_MARKER( pxTCBList );
+			ListItem_t *pxTCBListItem = listGET_HEAD_ENTRY( pxTCBList );
+
+			while( pxTCBListItem != pxTCBListEndMarker )
+			{
+				pxTCB = listGET_LIST_ITEM_OWNER( pxTCBListItem );
+
+				pxTCB->uxPriority = uxHighestPriority;
+				uxHighestPriority--;
+
+				pxTCBListItem = listGET_NEXT( pxTCBListItem );
+			}
+    }
+
+
 #endif /* schedSCHEDULING_POLICY */
 
 #if (schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1)
@@ -464,7 +492,9 @@ static void prvCheckDeadline(SchedTCB_t* pxTCB, TickType_t xTickCount)
 	/* your implementation goes here */
 	if (pxTCB != NULL && pxTCB->xWorkIsDone == pdFALSE && pxTCB->xExecutedOnce == pdTRUE)
 	{
-		pxTCB->xAbsoluteDeadline = pxTCB->xLastWakeTime + pxTCB->xRelativeDeadline;
+        if (schedSCHEDULING_POLICY != schedSCHEDULING_POLICY_EDF) {
+		    pxTCB->xAbsoluteDeadline = pxTCB->xLastWakeTime + pxTCB->xRelativeDeadline;
+        }
 		if ((signed)(pxTCB->xAbsoluteDeadline - xTickCount) <= 0)
 			prvDeadlineMissedHook(pxTCB, xTickCount);
 	}
@@ -562,7 +592,11 @@ static void prvSchedulerFunction(void* pvParameters)
 		}
 	#endif
 
-	#if (schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1 || schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME == 1)
+    #if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF) {
+        updatePrioritiesEDF();
+    }
+
+	#elif (schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1 || schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME == 1)
 		TickType_t xTickCount = xTaskGetTickCount();
 		SchedTCB_t* pxTCB;
 

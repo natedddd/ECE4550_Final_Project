@@ -29,9 +29,10 @@ extern "C" {
 /* The scheduling policy can be chosen from one of these. */
 #define schedSCHEDULING_POLICY_RMS 1 		/* Rate-monotonic scheduling */
 #define schedSCHEDULING_POLICY_DMS 2 		/* Deadline-monotonic scheduling */
+#define schedSCHEDULING_POLICY_EDF 3 		/* Earliest deadline first scheduling */
 
 /* Configure scheduling policy by setting this define to the appropriate one. */
-#define schedSCHEDULING_POLICY schedSCHEDULING_POLICY_RMS //schedSCHEDULING_POLICY_EDF
+#define schedSCHEDULING_POLICY schedSCHEDULING_POLICY_EDF //schedSCHEDULING_POLICY_EDF
 
 #define schedAUGMENT_SCHEDULER_TASK 0       /* Augment the scheduler to add scheduler overhead*/
 
