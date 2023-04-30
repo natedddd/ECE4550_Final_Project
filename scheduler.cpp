@@ -95,9 +95,9 @@ static SchedTCB_t xTCBArray[schedMAX_NUMBER_OF_PERIODIC_TASKS] = { 0 };
 /* Counter for number of periodic tasks. */
 static BaseType_t xTaskCounter = 0;
 #elif (schedUSE_TCB_LIST == 1)
-    static List_t *xTCBList = NULL; // linked list for period tasks
-    static List_t *xTCBTempList = NULL; // temp list for switching tasks
-    static List_t *xTCBPastDeadlineList = NULL; // extra list if an tasks go pass their deadline
+    static List_t *pxTCBList = NULL; // linked list for period tasks
+    static List_t *pxTCBTempList = NULL; // temp list for switching tasks
+    static List_t *pxTCBPastDeadlineList = NULL; // extra list if an tasks go pass their deadline
 #endif /* schedUSE_TCB_ARRAY */
 
 #if (schedUSE_SCHEDULER_TASK)
@@ -178,7 +178,7 @@ static void prvDeleteTCBFromArray(BaseType_t xIndex)
         listSET_LIST_ITEM_VALUE(&pxTCB->xTCBListItem,pxTCB->xAbsoluteDeadline);
 
         // item the items
-        vListInsert(xTCBList, &pxTCB->xTCBListItem);
+        vListInsert(pxTCBList, &pxTCB->xTCBListItem);
     }
 
     static void prvDeleteFromTCBList(SchedTCB_t *pxTCB) {
@@ -331,9 +331,12 @@ void vSchedulerPeriodicTaskCreate(TaskFunction_t pvTaskCode, const char* pcName,
 /* Deletes a periodic task. */
 void vSchedulerPeriodicTaskDelete(TaskHandle_t xTaskHandle)
 {
-	/* your implementation goes here */
-	prvDeleteTCBFromArray(prvGetTCBIndexFromHandle(xTaskHandle));
-
+    #if (schedUSE_TCB_ARRAY == 1)
+	    /* your implementation goes here */
+	    prvDeleteTCBFromArray(prvGetTCBIndexFromHandle(xTaskHandle));
+    #else 
+        prvDeleteFromTCBList((SchedTCB_t *) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), 0));
+    #endif
 	vTaskDelete(xTaskHandle);
 }
 
@@ -378,11 +381,11 @@ static void prvCreateAllTasks(void)
     ListItem_t *pxTCBListItem = listGET_HEAD_ENTRY(pxTCBList);
 
     while(pxTCBListItem != pxTCBListEnd) {
-        curPxTCB = listGET_LIST_ITEM_OWNER(pxTCBListItem);
+        SchedTCB_t* curPxTCB = listGET_LIST_ITEM_OWNER(pxTCBListItem);
 
         xTaskCreate(prvPeriodicTaskCode, curPxTCB->pcName, curPxTCB->uxStackDepth, curPxTCB->pvParameters, curPxTCB->uxPriority, curPxTCB->pxTaskHandle);
 
-        vTaskSetThreadLocalStoragePointer(*curPxTCB->pxTaskHandle, schedTHREAD_LOCAL_STORAGE_POINTER_INDEX, curPxTCB);
+        vTaskSetThreadLocalStoragePointer(*curPxTCB->pxTaskHandle, 0, curPxTCB);
         pxTCBListItem = listGET_NEXT( pxTCBListItem );
     }	
 #endif /* schedUSE_TCB_ARRAY */
@@ -486,44 +489,44 @@ static void prvSetFixedPriorities(void)
     }
 
     static void updatePrioritiesEDF( void ) {
-		SchedTCB_t *pxTCB;
+		SchedTCB_t *curPxTCB;
         ListItem_t *pxTCBListItem;
         ListItem_t *pxTCBListItemTemp;
     
-        if (listLIST_IS_EMPTY(pxTCBList) && !listLIST_IS_EMPTY(xTCBPastDeadlineList)) {
-            swapList( &pxTCBList, &xTCBPastDeadlineList );
+        if (listLIST_IS_EMPTY(pxTCBList) && !listLIST_IS_EMPTY(pxTCBPastDeadlineList)) {
+            swapList(&pxTCBList, &pxTCBPastDeadlineList);
         }
 
         const ListItem_t *pxTCBListEndMarker = listGET_END_MARKER(pxTCBList);
-        pxTCBListItem = listGET_HEAD_ENTRY( pxTCBList );
+        pxTCBListItem = listGET_HEAD_ENTRY(pxTCBList);
 
-        while( pxTCBListItem != pxTCBListEndMarker ) {
-            pxTCB = listGET_LIST_ITEM_OWNER( pxTCBListItem );
+        while(pxTCBListItem != pxTCBListEndMarker) {
+            curPxTCB = listGET_LIST_ITEM_OWNER(pxTCBListItem);
 
             // update priority
-            listSET_LIST_ITEM_VALUE( pxTCBListItem, pxTCB->xAbsoluteDeadline );
+            listSET_LIST_ITEM_VALUE( pxTCBListItem, curPxTCB->xAbsoluteDeadline );
 
             pxTCBListItemTemp = pxTCBListItem;
-            pxTCBListItem = listGET_NEXT( pxTCBListItem );
-            uxListRemove( pxTCBListItem->pxPrevious );
+            pxTCBListItem = listGET_NEXT( pxTCBListItem);
+            uxListRemove(pxTCBListItem->pxPrevious);
 
             // insert into the extra list if its before deadline
-            if( pxTCB->xAbsoluteDeadline < pxTCB->xLastWakeTime ) {
-                vListInsert( xTCBPastDeadlineList, pxTCBListItemTemp );
+            if(curPxTCB->xAbsoluteDeadline < curPxTCB->xLastWakeTime) {
+                vListInsert(pxTCBPastDeadlineList, pxTCBListItemTemp);
 
             } else { // interest into the temp list
-                vListInsert( pxTCBTempList, pxTCBListItemTemp );
+                vListInsert(pxTCBTempList, pxTCBListItemTemp );
             }
         }
 
         // swap current list with the temp list
-        swapList( &pxTCBList, &pxTCBTempList );
+        swapList(&pxTCBList, &pxTCBTempList);
 
         BaseType_t xHighestPriority = schedSCHEDULER_PRIORITY - 1;
 
-        const ListItem_t *pxTCBListEndMarkerAfterSwap = listGET_END_MARKER( pxTCBList );
-        pxTCBListItem = listGET_HEAD_ENTRY( pxTCBList );
-        while( pxTCBListItem != pxTCBListEndMarkerAfterSwprvAddTCBToListap )
+        const ListItem_t *pxTCBListEndAfterSwap = listGET_END_MARKER(pxTCBList);
+        pxTCBListItem = listGET_HEAD_ENTRY(pxTCBList);
+        while(pxTCBListItem != pxTCBListEndAfterSwap)
         {
             curPxTCB = listGET_LIST_ITEM_OWNER( pxTCBListItem );
             curPxTCB->uxPriority = xHighestPriority;
@@ -643,9 +646,11 @@ static void prvExecTimeExceedHook(TickType_t xTickCount, SchedTCB_t* pxCurrentTa
  * Timing Error Detection feature. */
 static void prvSchedulerCheckTimingError(TickType_t xTickCount, SchedTCB_t* pxTCB)
 {
+    #if( schedUSE_TCB_ARRAY == 1 )
 	/* your implementation goes here */
-	if (pxTCB->xInUse == pdFALSE)
-		return;
+	    if (pxTCB->xInUse == pdFALSE)
+		    return;
+    #endif
 
 #if (schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1)
 	/* check if task missed deadline */
@@ -776,15 +781,19 @@ void vApplicationTickHook(void)
 	BaseType_t xIndex;
 	BaseType_t prioCurrentTask = uxTaskPriorityGet(xCurrentTaskHandle);
 
-	for (xIndex = 0; xIndex < xTaskCounter; xIndex++)
-	{
-		pxCurrentTask = &xTCBArray[xIndex];
-		if (pxCurrentTask->uxPriority == prioCurrentTask)
-		{
-			flag = 1;
-			break;
-		}
-	}
+    #if (schedUSE_TCB_ARRAY == 1)
+        for (xIndex = 0; xIndex < xTaskCounter; xIndex++)
+        {
+            pxCurrentTask = &xTCBArray[xIndex];
+            if (pxCurrentTask->uxPriority == prioCurrentTask)
+            {
+                flag = 1;
+                break;
+            }
+        }
+    #else
+        pxCurrentTask = (SchedTCB_t *) pvTaskGetThreadLocalStoragePointer(xCurrentTaskHandle, 0);
+    #endif
 	if (xCurrentTaskHandle != xSchedulerHandle && xCurrentTaskHandle != xTaskGetIdleTaskHandle() && flag == 1)
 	{
 		pxCurrentTask->xExecTime++;
