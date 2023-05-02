@@ -6,7 +6,6 @@
 #include <projdefs.h>
 #include <timers.h>
 #include <list.h>
-#include <croutine.h>
 #include <portable.h>
 #include <stack_macros.h>
 #include <mpu_wrappers.h>

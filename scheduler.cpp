@@ -212,6 +212,8 @@ static void prvPeriodicTaskCode(void* pvParameters)
 		Serial.print(pxThisTask->pcName);
 		Serial.print(" - ");
 		Serial.print(xTaskGetTickCount());
+		// Serial.print("with deadline: ");
+		// Serial.print(pxThisTask->xAbsoluteDeadline);
 		Serial.print("\n");
 		Serial.flush();
 
@@ -219,12 +221,12 @@ static void prvPeriodicTaskCode(void* pvParameters)
 		pxThisTask->xExecTime = 0;
 		pxThisTask->pvTaskCode(pvParameters);
 		
-		Serial.print("Finished: ");
-		Serial.print(pxThisTask->pcName);
-		Serial.print(" - ");
-		Serial.print(xTaskGetTickCount());
-		Serial.print("\n");
-		Serial.flush();
+		// Serial.print("Finished: ");
+		// Serial.print(pxThisTask->pcName);
+		// Serial.print(" - ");
+		// Serial.print(xTaskGetTickCount());
+		// Serial.print("\n");
+		// Serial.flush();
 
 		pxThisTask->xWorkIsDone = pdTRUE;
 		pxThisTask->xExecTime = 0;
@@ -293,14 +295,6 @@ void vSchedulerPeriodicTaskCreate(TaskFunction_t pvTaskCode, const char* pcName,
 	xTaskCounter++;
 #endif /* schedUSE_TCB_SORTED_LIST */
 
-#if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF) 
-	// TickType_t currentTick = xTaskGetTickCount();
-	// listSET_LIST_ITEM_VALUE( &( ( pxNewTCB )->xGenericListItem ), ( pxNewTCB
-	// )->xPeriod + currentTick);
-
-	// prvAddTaskToReadyList( pxNewTCB );
-#endif
-
 
 	taskEXIT_CRITICAL();
 }
@@ -325,9 +319,14 @@ static void prvCreateAllTasks(void)
 	{
 		configASSERT(pdTRUE == xTCBArray[xIndex].xInUse);
 		pxTCB = &xTCBArray[xIndex];
-
+		#if (configUSE_EDF_SCHEDULER == 1) 
 		BaseType_t xReturnValue = xTaskPeriodicCreate(prvPeriodicTaskCode, pxTCB->pcName, pxTCB->uxStackDepth,
-			pxTCB->pvParameters, pxTCB->uxPriority, pxTCB->pxTaskHandle, pxTCB->xRelativeDeadline /* your implementation goes here */);
+			pxTCB->pvParameters, pxTCB->uxPriority, pxTCB->pxTaskHandle, pxTCB->xAbsoluteDeadline /* your implementation goes here */);
+		#else
+			BaseType_t xReturnValue = xTaskCreate(prvPeriodicTaskCode, pxTCB->pcName, pxTCB->uxStackDepth,
+			pxTCB->pvParameters, pxTCB->uxPriority, pxTCB->pxTaskHandle /* your implementation goes here */);
+		#endif
+		
 		if (xReturnValue == pdPASS)
 		{
 			Serial.print(pxTCB->pcName);
@@ -424,8 +423,13 @@ static void prvSetFixedPriorities(void)
 /* Recreates a deleted task that still has its information left in the task array (or list). */
 static void prvPeriodicTaskRecreate(SchedTCB_t* pxTCB)
 {
-	BaseType_t xReturnValue = xTaskCreate(prvPeriodicTaskCode, pxTCB->pcName, pxTCB->uxStackDepth,
-		pxTCB->pvParameters, pxTCB->uxPriority, pxTCB->pxTaskHandle /* your implementation goes here */);
+		#if (configUSE_EDF_SCHEDULER == 1) 
+		BaseType_t xReturnValue = xTaskPeriodicCreate(prvPeriodicTaskCode, pxTCB->pcName, pxTCB->uxStackDepth,
+			pxTCB->pvParameters, pxTCB->uxPriority, pxTCB->pxTaskHandle, pxTCB->xAbsoluteDeadline /* your implementation goes here */);
+		#else
+			BaseType_t xReturnValue = xTaskCreate(prvPeriodicTaskCode, pxTCB->pcName, pxTCB->uxStackDepth,
+			pxTCB->pvParameters, pxTCB->uxPriority, pxTCB->pxTaskHandle /* your implementation goes here */);
+		#endif
 
 	if (pdPASS == xReturnValue)
 	{
@@ -595,7 +599,7 @@ static void prvSchedulerFunction(void* pvParameters)
 		/* You may find the following helpful...
 			prvSchedulerCheckTimingError( xTickCount, pxTCB );
 		*/
-		Serial.println("Checking");
+		Serial.println("Checking timing for tasks");
 		Serial.flush();
 	#if (schedUSE_TCB_ARRAY == 1)
 		BaseType_t xIndex;
@@ -618,7 +622,12 @@ static void prvSchedulerFunction(void* pvParameters)
 /* Creates the scheduler task. */
 static void prvCreateSchedulerTask(void)
 {
-	xTaskCreate((TaskFunction_t)prvSchedulerFunction, "Scheduler", schedSCHEDULER_TASK_STACK_SIZE, NULL, schedSCHEDULER_PRIORITY, &xSchedulerHandle);
+	#if (configUSE_EDF_SCHEDULER == 1) 
+		xTaskPeriodicCreate((TaskFunction_t)prvSchedulerFunction, "Scheduler", schedSCHEDULER_TASK_STACK_SIZE, NULL, schedSCHEDULER_PRIORITY, &xSchedulerHandle, (TickType_t)10);
+	#else
+		xTaskCreate((TaskFunction_t)prvSchedulerFunction, "Scheduler", schedSCHEDULER_TASK_STACK_SIZE, NULL, schedSCHEDULER_PRIORITY, &xSchedulerHandle);
+	#endif
+
 }
 #endif /* schedUSE_SCHEDULER_TASK */
 
@@ -644,7 +653,6 @@ void vApplicationTickHook(void)
 	UBaseType_t flag = 0;
 	BaseType_t xIndex;
 	BaseType_t prioCurrentTask = uxTaskPriorityGet(xCurrentTaskHandle);
-
 	for (xIndex = 0; xIndex < xTaskCounter; xIndex++)
 	{
 		pxCurrentTask = &xTCBArray[xIndex];
@@ -696,6 +704,7 @@ void vSchedulerInit(void)
 #endif /* schedUSE_TCB_ARRAY */
 
 	Serial.println("vSchedulerInit() completed!");
+	Serial.flush();
 }
 
 /* Starts scheduling tasks. All periodic tasks (including polling server) must

@@ -74,7 +74,7 @@ static void Task1_Set2( void *pvParameters )
   TickType_t xTickCountInterval = 6;
   while ((xTickCountEnd - xTickCountStart) < xTickCountInterval) {
     xTickCountEnd = xTaskGetTickCount();
-    for (i = 0; i < 5000; i ++) {j+=1;}
+    for (i = 0; i < 1000; i ++) {j+=1;}
   }
 }
 
@@ -88,7 +88,7 @@ static void Task2_Set2( void *pvParameters )
     
   while ((xTickCountEnd - xTickCountStart) < xTickCountInterval) {
     xTickCountEnd = xTaskGetTickCount();
-    for (i = 0; i < 5000; i ++) {j+=1;}
+    for (i = 0; i < 1000; i ++) {j+=1;}
   }
 }
 
@@ -102,7 +102,7 @@ static void Task3_Set2( void *pvParameters )
 
   while ((xTickCountEnd - xTickCountStart) < xTickCountInterval) {
     xTickCountEnd = xTaskGetTickCount();
-    for (i = 0; i < 5000; i ++) {j+=1;}
+    for (i = 0; i < 1000; i ++) {j+=1;}
   }
 }
 
@@ -116,7 +116,7 @@ static void Task4_Set2( void *pvParameters )
 
   while ((xTickCountEnd - xTickCountStart) < xTickCountInterval) {
     xTickCountEnd = xTaskGetTickCount();
-    for (i = 0; i < 5000; i ++) {j+=1;}
+    for (i = 0; i < 1000; i ++) {j+=1;}
   }
 
 }
