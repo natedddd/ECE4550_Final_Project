@@ -59,6 +59,8 @@ static void prvCreateAllTasks(void);
 
 #if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS || schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_DMS)
 static void prvSetFixedPriorities(void);
+#else
+static void updateAllPriorities(void);
 #endif /* schedSCHEDULING_POLICY_RMS */
 
 #if (schedUSE_SCHEDULER_TASK == 1)
@@ -163,6 +165,7 @@ static void prvPeriodicTaskCode(void* pvParameters)
 	SchedTCB_t* pxThisTask;
 	TaskHandle_t xCurrentTaskHandle = xTaskGetCurrentTaskHandle();
 
+
 	/* your implementation goes here */
 	/* Check the handle is not NULL. */
 	configASSERT(xCurrentTaskHandle != NULL);
@@ -200,10 +203,15 @@ static void prvPeriodicTaskCode(void* pvParameters)
 
 	for (;;)
 	{
+        #if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF) 
+            prvWakeScheduler();
+        #endif
 		/* Execute the task function specified by the user. */
 		Serial.print(pxThisTask->pcName);
 		Serial.print(" - ");
 		Serial.print(xTaskGetTickCount());
+		Serial.print(" with prioritiy ");
+		Serial.print(pxThisTask->uxPriority);
 		Serial.print("\n");
 		Serial.flush();
 
@@ -213,6 +221,14 @@ static void prvPeriodicTaskCode(void* pvParameters)
 
 		pxThisTask->xWorkIsDone = pdTRUE;
 		pxThisTask->xExecTime = 0;
+
+        #if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF) 
+            pxThisTask->xAbsoluteDeadline = pxThisTask->xLastWakeTime + pxThisTask->xPeriod + pxThisTask->xRelativeDeadline;
+            Serial.println("HERE"); Serial.flush();
+            Serial.println("UPDATING PRIORITIIES"); Serial.flush();
+            updateAllPriorities();
+
+        #endif
 
 		xTaskDelayUntil(&pxThisTask->xLastWakeTime, pxThisTask->xPeriod);
 	}
@@ -260,6 +276,12 @@ void vSchedulerPeriodicTaskCreate(TaskFunction_t pvTaskCode, const char* pcName,
 #if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS || schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_DMS)
 	/* member initialization */
 	/* your implementation goes here */
+	pxNewTCB->xPriorityIsSet = pdFALSE;
+#endif /* schedSCHEDULING_POLICY */
+
+#if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF)
+    pxNewTCB->xAbsoluteDeadline = pxNewTCB->xRelativeDeadline + pxNewTCB->xReleaseTime + xSystemStartTime;
+    pxNewTCB->uxPriority = -1;
 	pxNewTCB->xPriorityIsSet = pdFALSE;
 #endif /* schedSCHEDULING_POLICY */
 
@@ -315,7 +337,7 @@ static void prvCreateAllTasks(void)
 			Serial.print(", WCET- ");
 			Serial.print(pxTCB->xMaxExecTime);
 			Serial.print(", Deadline- ");
-			Serial.print(pxTCB->xRelativeDeadline);
+			Serial.print(pxTCB->xAbsoluteDeadline);
 			Serial.println();
 			Serial.flush();
 		}
@@ -392,6 +414,67 @@ static void prvSetFixedPriorities(void)
 		xPreviousShortest = xShortest;
 	}
 }
+#else 
+    static void updateAllPriorities(void) {
+        BaseType_t xIter, xIndex;
+        TickType_t xShortest, xPreviousShortest = 0;
+        SchedTCB_t* pxShortestTaskPointer, * pxTCB;
+
+        #if (schedUSE_SCHEDULER_TASK == 1)
+            BaseType_t xHighestPriority = schedSCHEDULER_PRIORITY;
+        #else
+            BaseType_t xHighestPriority = configMAX_PRIORITIES;
+        #endif /* schedUSE_SCHEDULER_TASK */
+        /* search for shortest absolute deadline */
+        for (xIndex = 0; xIndex < xTaskCounter; xIndex++) {
+            xTCBArray[xIndex].xPriorityIsSet = pdFALSE;
+            xTCBArray[xIndex].uxPriority = -1;
+        }
+
+        for (xIter = 0; xIter < xTaskCounter; xIter++)
+        {
+            xShortest = portMAX_DELAY;
+
+            /* search for shortest absolute deadline */
+            for (xIndex = 0; xIndex < xTaskCounter; xIndex++)
+            {
+                /* your implementation goes here */
+                if (xTCBArray[xIndex].xInUse == pdFALSE)
+                    // Serial.println("2"); Serial.flush();
+                    continue;
+                if (xTCBArray[xIndex].xPriorityIsSet == pdTRUE)
+                    // Serial.println("3"); Serial.flush();
+                    continue;
+                // Serial.print("xShortest are "); Serial.println(xShortest); Serial.flush();
+
+                if (xShortest > xTCBArray[xIndex].xAbsoluteDeadline)
+                {
+                    xShortest = xTCBArray[xIndex].xAbsoluteDeadline;
+                    pxShortestTaskPointer = &xTCBArray[xIndex];
+                }
+            }
+
+            /* set highest priority to task with xShortest period (the highest priority is configMAX_PRIORITIES-1) */
+
+            /* your implementation goes here */
+            if (xShortest != xPreviousShortest) {
+                if (xHighestPriority > 0) {
+                    xHighestPriority--;
+                } else {
+                    xHighestPriority = 0;
+                }
+            }
+            // Serial.print("xHighest Priority "); Serial.println(xHighestPriority); Serial.flush();
+            configASSERT(0 <= xHighestPriority);
+            pxShortestTaskPointer->uxPriority = xHighestPriority;
+            pxShortestTaskPointer->xPriorityIsSet = pdTRUE;
+            // Serial.print(pxShortestTaskPointer->pcName); Serial.println(pxShortestTaskPointer->uxPriority); Serial.flush();
+            xPreviousShortest = xShortest;
+            // Serial.print("Task "); Serial.print(pxShortestTaskPointer->pcName);
+            // Serial.print(" has prioritiy "); Serial.println(pxShortestTaskPointer->uxPriority);
+            // Serial.flush();
+        }
+    }
 #endif /* schedSCHEDULING_POLICY */
 
 #if (schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1)
@@ -416,7 +499,7 @@ static void prvPeriodicTaskRecreate(SchedTCB_t* pxTCB)
 	#if (schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME == 1)
 		pxTCB->xSuspended = pdFALSE;
 		pxTCB->xMaxExecTimeExceeded = pdFALSE;
-	#endif /* schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME */
+	#endif /* schedUSE_TIpxShortestTaskPointer->uxPriorityMING_ERROR_DETECTION_EXECUTION_TIME */
 	}
 	else
 	{
@@ -464,7 +547,10 @@ static void prvCheckDeadline(SchedTCB_t* pxTCB, TickType_t xTickCount)
 	/* your implementation goes here */
 	if (pxTCB != NULL && pxTCB->xWorkIsDone == pdFALSE && pxTCB->xExecutedOnce == pdTRUE)
 	{
-		pxTCB->xAbsoluteDeadline = pxTCB->xLastWakeTime + pxTCB->xRelativeDeadline;
+        #if (schedSCHEDULING_POLICY != schedSCHEDULING_POLICY_EDF)
+    		pxTCB->xAbsoluteDeadline = pxTCB->xLastWakeTime + pxTCB->xRelativeDeadline;
+        #endif /* schedSCHEDULING_POLICY */
+
 		if ((signed)(pxTCB->xAbsoluteDeadline - xTickCount) <= 0)
 			prvDeadlineMissedHook(pxTCB, xTickCount);
 	}
@@ -524,19 +610,24 @@ static void prvSchedulerCheckTimingError(TickType_t xTickCount, SchedTCB_t* pxTC
 		Serial.print("\n");
 		Serial.flush();
 	}
+    // Serial.println("ONE");Serial.flush();
 	if (pdTRUE == pxTCB->xSuspended)
 	{
+        Serial.println("TWo");Serial.flush();
 		if ((signed)(pxTCB->xAbsoluteUnblockTime - xTickCount) < 0)
 		{
+            Serial.println("three");Serial.flush();
 			pxTCB->xSuspended = pdFALSE;
 			pxTCB->xLastWakeTime = xTickCount;
 			vTaskResume(*pxTCB->pxTaskHandle);
+            Serial.println("four");Serial.flush();
 			Serial.print(pxTCB->pcName);
 			Serial.print(" resumed - ");
 			Serial.print(xTaskGetTickCount());
 			Serial.print("\n");
 			Serial.flush();
 		}
+        Serial.println("Six");Serial.flush();
 	}
 #endif /* schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME */
 
@@ -566,25 +657,31 @@ static void prvSchedulerFunction(void* pvParameters)
 		TickType_t xTickCount = xTaskGetTickCount();
 		SchedTCB_t* pxTCB;
 
+        // #if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF)
+        //     updateAllPriorities();
+        // #endif
+
 		/* your implementation goes here. */
 		/* You may find the following helpful...
 			prvSchedulerCheckTimingError( xTickCount, pxTCB );
 		*/
-	#if (schedUSE_TCB_ARRAY == 1)
-		BaseType_t xIndex;
-		for (xIndex = 0; xIndex < xTaskCounter; xIndex++)
-		{
-			pxTCB = &xTCBArray[xIndex];
-			if ((pxTCB) && (pxTCB->xInUse == pdTRUE) && (pxTCB->pxTaskHandle != NULL))
-			{
-				prvSchedulerCheckTimingError(xTickCount, pxTCB);
-			}
-		}
-	#endif
+        #if (schedUSE_TCB_ARRAY == 1)
+            BaseType_t xIndex;
+            for (xIndex = 0; xIndex < xTaskCounter; xIndex++)
+            {
+                pxTCB = &xTCBArray[xIndex];
+                if ((pxTCB) && (pxTCB->xInUse == pdTRUE) && (pxTCB->pxTaskHandle != NULL))
+                {
+                    prvSchedulerCheckTimingError(xTickCount, pxTCB);
+                }
+            }
+        #endif
 
 	#endif /* schedUSE_TIMING_ERROR_DETECTION_DEADLINE || schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME */
 
+                    Serial.println("10");
 		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+                    Serial.println("11");
 	}
 }
 
@@ -599,6 +696,7 @@ static void prvCreateSchedulerTask(void)
 /* Wakes up (context switches to) the scheduler task. */
 static void prvWakeScheduler(void)
 {
+    Serial.println("9");
 	BaseType_t xHigherPriorityTaskWoken;
 	vTaskNotifyGiveFromISR(xSchedulerHandle, &xHigherPriorityTaskWoken);
 	xTaskResumeFromISR(xSchedulerHandle);
@@ -617,6 +715,8 @@ void vApplicationTickHook(void)
 	UBaseType_t flag = 0;
 	BaseType_t xIndex;
 	BaseType_t prioCurrentTask = uxTaskPriorityGet(xCurrentTaskHandle);
+
+//   Serial.println("a");
 
 	for (xIndex = 0; xIndex < xTaskCounter; xIndex++)
 	{
@@ -638,6 +738,7 @@ void vApplicationTickHook(void)
 			{
 				if (pdFALSE == pxCurrentTask->xSuspended)
 				{
+                    Serial.println("here1");
 					prvExecTimeExceedHook(xTaskGetTickCountFromISR(), pxCurrentTask);
 				}
 			}
@@ -672,13 +773,17 @@ void vSchedulerStart(void)
 {
 #if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS || schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_DMS)
 	prvSetFixedPriorities();
+#else
+    updateAllPriorities();
+#endif
+
 #if (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS)
 	Serial.println("Schedule using RM.");
 #elif (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_DMS)
 	Serial.println("Schedule using DM.");
+#else (schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF)
+	Serial.println("Schedule using EDF.");
 #endif
-
-#endif /* schedSCHEDULING_POLICY */
 
 #if (schedUSE_SCHEDULER_TASK == 1)
 	prvCreateSchedulerTask();
